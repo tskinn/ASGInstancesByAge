@@ -9,28 +9,29 @@ import (
 	"time"
 	"flag"
 	"sort"
+	"strings"
 )
 
 type Instances []*ec2.Instance
 
 var flag_asgName string
-var flag_deleteInstances bool
 var flag_region string
-var flag_list bool
 var flag_numInstances int
 var flag_percentInsts float64
+var flag_showLaunchTime bool
 
 var now time.Time
 
 func init() {
-	flag.StringVar(&flag_asgName, "n", "", "name of autoscaling group. if no name provided then all autoscaling grouops are considered")
+	flag.StringVar(&flag_asgName, "n", "", "name of autoscaling group. if no name provided then all autoscaling grouops are considered. also accepts a list of comma separate names with no spaces")
 //	flag.StringVar(&flag_asgName, "name", "", "name of autoscaling group")
 	flag.StringVar(&flag_region, "r", "us-east-1", "aws region")
 //	flag.StringVar(&flag_region, "region", "us-east-1", "aws region")
 	flag.IntVar(&flag_numInstances, "i", 0, "number of instances to print (has priority over percentage)")
 //	flag.IntVar(&flag_numInstances, "instances", 0, "number of instances to print (has priority over percentage)")
 	flag.Float64Var(&flag_percentInsts, "p", 0.0, "percentage of instances to print (minimum of one instance is printed)")
-//	flag.Float64Var(&flag_percentInsts, "percentage", 0.0, "percentage of instances to print (minimum of one instance is printed)")
+	//	flag.Float64Var(&flag_percentInsts, "percentage", 0.0, "percentage of instances to print (minimum of one instance is printed)")
+	flag.BoolVar(&flag_showLaunchTime, "l", false, "prints the launch times of each instance")
 }
 
 // Returns all instances that are in autoscaling groups within the given region
@@ -63,17 +64,27 @@ func getAutoScalingInstances() []*autoscaling.InstanceDetails{
 			break
 		}
 	}
-	if flag_asgName != "" {
-		return filterByASGName(instances)
+	if flag_asgName == "" {
+		return instances		
 	}
-	return instances
+	return filterByASGName(instances)
+}
+
+func contains(names []string, asgName string) bool {
+	for _, name := range names {
+		if name == asgName {
+			return true
+		}
+	}
+	return false
 }
 
 // Return a list of instanceDetails that are part of asg named flag_asgName.
 func filterByASGName(instances []*autoscaling.InstanceDetails) []*autoscaling.InstanceDetails {
 	newList := make([]*autoscaling.InstanceDetails, 0)
+	names := parseNames()
 	for _, instance := range instances {
-		if *instance.AutoScalingGroupName == flag_asgName {
+		if contains(names, *instance.AutoScalingGroupName) {
 			newList = append(newList, instance)
 		}
 	}
@@ -116,7 +127,11 @@ func printNum(instances Instances, max int) {
 		max = len(instances)
 	}
 	for i := 0; i < max; i++ {
-		fmt.Println(*instances[i].InstanceId)
+		if flag_showLaunchTime {
+			fmt.Printf("%s\t%s\n", *instances[i].InstanceId, *instances[i].LaunchTime)
+		} else {
+			fmt.Println(*instances[i].InstanceId)
+		}
 	}
 }
 
@@ -129,12 +144,16 @@ func printPercent(instances Instances) {
 	printNum(instances, max)
 }
 
+func parseNames() []string {
+	return strings.Split(flag_asgName, ",")
+}
+
 func (instances Instances) Len() int {return len(instances)}
 func (instances Instances) Swap(i, j int) {instances[i], instances[j] = instances[j], instances[i]}
 func (instances Instances) Less(i, j int) bool {
 	iDur := now.Sub(*instances[i].LaunchTime)
 	jDur := now.Sub(*instances[j].LaunchTime)
-	return iDur < jDur
+	return iDur > jDur
 }
 
 func main() {
@@ -143,7 +162,6 @@ func main() {
 
 	insts := Instances(getEC2Instances(getInstanceIds(getAutoScalingInstances())))
 	sort.Sort(insts)    // sort by launch date
-	sort.Reverse(insts) // reverse order so that olderst instances are first
 	if flag_numInstances != 0 {
 		printNum(insts, flag_numInstances)
 	} else if flag_percentInsts != 0.0 {
