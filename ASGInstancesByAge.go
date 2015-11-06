@@ -10,6 +10,7 @@ import (
 	"flag"
 	"sort"
 	"strings"
+	"os"
 )
 
 type Instances []*ec2.Instance
@@ -70,6 +71,8 @@ func getAutoScalingInstances() []*autoscaling.InstanceDetails{
 	return filterByASGName(instances)
 }
 
+// helper function - instead of using strings.Contains,
+// split the names and compare each string individually
 func contains(names []string, asgName string) bool {
 	for _, name := range names {
 		if name == asgName {
@@ -78,6 +81,12 @@ func contains(names []string, asgName string) bool {
 	}
 	return false
 }
+
+// helper function 
+func parseNames() []string {
+	return strings.Split(flag_asgName, ",")
+}
+
 
 // Return a list of instanceDetails that are part of asg named flag_asgName.
 func filterByASGName(instances []*autoscaling.InstanceDetails) []*autoscaling.InstanceDetails {
@@ -105,6 +114,9 @@ func getInstanceIds(instances []*autoscaling.InstanceDetails) []*string {
 // this is needed because the autoscaling group instances provide as many details
 // as the ec2 instances do. In this case we need the instance launch time.
 func getEC2Instances(ids []*string) []*ec2.Instance {
+	if len(ids) == 0 {
+		os.Exit(0)
+	}
 	instances := make([]*ec2.Instance, 0)
 	svc := ec2.New(session.New(), &aws.Config{ Region: aws.String(flag_region) })
 	params := &ec2.DescribeInstancesInput{ InstanceIds: ids }
@@ -122,7 +134,8 @@ func getEC2Instances(ids []*string) []*ec2.Instance {
 	return instances
 }
 
-func printNum(instances Instances, max int) {
+func printInstIDs(instances Instances, max int) {
+	// avoid index out of bounds
 	if max > len(instances) {
 		max = len(instances)
 	}
@@ -135,17 +148,13 @@ func printNum(instances Instances, max int) {
 	}
 }
 
-func printPercent(instances Instances) {
+func printInstIdsPercent(instances Instances) {
 	max := int(flag_percentInsts * float64(len(instances)))
 	// lets just always print one as a minimum
 	if max == 0 {
 		max = 1
 	}
-	printNum(instances, max)
-}
-
-func parseNames() []string {
-	return strings.Split(flag_asgName, ",")
+	printInstIDs(instances, max)
 }
 
 func (instances Instances) Len() int {return len(instances)}
@@ -163,10 +172,10 @@ func main() {
 	insts := Instances(getEC2Instances(getInstanceIds(getAutoScalingInstances())))
 	sort.Sort(insts)    // sort by launch date
 	if flag_numInstances != 0 {
-		printNum(insts, flag_numInstances)
+		printInstIDs(insts, flag_numInstances)
 	} else if flag_percentInsts != 0.0 {
-		printPercent(insts)
+		printInstIdsPercent(insts)
 	} else {
-		printNum(insts, len(insts))
+		printInstIDs(insts, len(insts))
 	}
 }
